@@ -356,10 +356,71 @@ function narratorCompose(parsedIngredients, matchedRecipes) {
 // ============================================================
 // Chef Agent — Real-time chat via Pollinations → MiMo V2.5
 // ============================================================
+
+// Indonesian (ID) Malay → Indonesian normalization. The Pollinations
+// gpt-oss-20b model occasionally drifts into Bahasa Melayu; this safety
+// net replaces the most common Malay tokens with Indonesian equivalents
+// after the model returns. Word-boundary regex preserves dish names.
+const MALAY_TO_ID = [
+  [/\bmahu\b/gi, 'mau'],
+  [/\bsebab\b/gi, 'karena'],
+  [/\bkerana\b/gi, 'karena'],
+  [/\bawak\b/gi, 'kamu'],
+  [/\bpula\b/gi, 'juga'],
+  [/\btetapi\b/gi, 'tapi'],
+  [/\bialah\b/gi, 'adalah'],
+  [/\blazat\b/gi, 'enak'],
+  [/\bsedap\b/gi, 'enak'],
+  [/\bkelumpo\b/gi, 'kluwek'],
+  [/\bbuah keras\b/gi, 'kemiri'],
+  [/\bricah\b/gi, 'kaya'],
+  [/\bempok\b/gi, 'empuk'],
+  [/\bkulit kelapa\b/gi, 'santan kelapa'],
+  [/\bsdh-sudah\b/gi, 'sudah'],
+  [/\bsdh\b/gi, 'sudah'],
+];
+
+function normalizeIndonesian(text) {
+  let out = text;
+  for (const [pattern, replacement] of MALAY_TO_ID) {
+    out = out.replace(pattern, replacement);
+  }
+  return out;
+}
+
 async function chefChat(userMessage) {
   const systemPrompt = STATE.lang === 'id'
-    ? 'Kamu adalah Chef MiMo, ahli masakan Indonesia yang ramah dan berpengetahuan. Jawab dalam Bahasa Indonesia. Bantu pengguna dengan resep nusantara, teknik memasak, substitusi bahan, dan tips dapur. Jaga jawaban tetap praktis dan ringkas (maksimal 4 paragraf pendek). Gunakan markdown ringan (**bold**, daftar) bila membantu.'
-    : 'You are Chef MiMo, a friendly and knowledgeable Indonesian cuisine expert. Respond in English. Help users with nusantara recipes, cooking techniques, ingredient substitutions, and kitchen tips. Keep answers practical and concise (max 4 short paragraphs). Use light markdown (**bold**, lists) where helpful.';
+    ? `Kamu adalah Chef MiMo, ahli masakan Indonesia yang ramah dan berpengetahuan.
+
+ATURAN BAHASA — WAJIB DIIKUTI:
+- Jawab HANYA dalam BAHASA INDONESIA BAKU yang natural dan sehari-hari
+- DILARANG menggunakan Bahasa Melayu/Malaysia
+- Kata yang DILARANG (Melayu): mahu, sebab, kerana, awak, pula, tetapi, ialah, lazat, sedap, kelumpo, ricah, empok
+- Pakai kata Indonesia yang BENAR: mau, karena, kamu/Anda, juga, tapi, adalah, enak, kemiri, kaya, empuk
+- Hanya nama hidangan asli yang boleh tetap (rendang, gulai, soto, nasi padang, dll)
+
+GAYA:
+- Tone hangat profesional seperti chef yang mengajar
+- Maksimal 4 paragraf pendek
+- Pakai markdown ringan: **tebal**, daftar berpoin
+
+Contoh respons yang BENAR:
+"Untuk rendang yang empuk, gunakan daging berlemak seperti sandung lamur. Tumis bumbu halus sampai harum, lalu masukkan daging dan santan. Masak dengan api kecil sambil terus diaduk supaya tidak gosong. Proses ini butuh 2-3 jam — tapi inilah rahasia kenapa rendang jadi kaya rasa."`
+    : `You are Chef MiMo, a friendly and knowledgeable Indonesian cuisine expert.
+
+LANGUAGE RULES — STRICTLY ENFORCED:
+- Respond ONLY in clear, natural English
+- NEVER mix in Indonesian, Malay, or any other language
+- The ONLY exception: dish names may stay in Indonesian (rendang, gulai, soto, nasi padang, etc.)
+- Use professional but warm cooking-instructor tone
+
+STYLE:
+- Maximum 4 short paragraphs
+- Light markdown allowed: **bold**, bullet lists
+- Practical, technique-focused, cite Indonesian culinary tradition where relevant
+
+Example correct response:
+"For tender rendang, choose a fatty cut like beef brisket or short rib. Sear the meat first, then simmer it slowly in coconut milk and spice paste for 2-3 hours until the liquid reduces to a dark, dry caramelized glaze. The patience is the secret — rushing rendang strips it of depth."`;
 
   const messages = [
     { role: 'system', content: systemPrompt },
@@ -378,13 +439,18 @@ async function chefChat(userMessage) {
         model: CONFIG.model,
         messages,
         referrer: CONFIG.appName,
+        temperature: 0.7,
         max_tokens: 600
       })
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    const reply = data.choices?.[0]?.message?.content?.trim();
+    let reply = data.choices?.[0]?.message?.content?.trim();
     if (!reply) throw new Error('Empty reply');
+    // Apply Malay → Indonesian safety net for ID mode
+    if (STATE.lang === 'id') {
+      reply = normalizeIndonesian(reply);
+    }
     return reply;
   } catch (err) {
     console.error('Chef chat error:', err);
